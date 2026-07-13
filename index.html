@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>名刺帳</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #EFEDE4; color: #22262B; font-family: 'Zen Kaku Gothic New', sans-serif; }
+  input:focus, textarea:focus { outline: 2px solid #B23A2E; outline-offset: 1px; }
+  button:focus-visible { outline: 2px solid #B23A2E; outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React (UMD builds, no build step needed) -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<!-- Firebase (modular SDK via CDN) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+    onAuthStateChanged, signOut
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import {
+    getFirestore, doc, setDoc, onSnapshot
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  // ▼▼▼ ここを自分のFirebaseプロジェクトの設定に書き換えてください ▼▼▼
+  // Firebaseコンソール > プロジェクトの設定 > 全般 > マイアプリ(ウェブ) からコピーできます
+  const firebaseConfig = {
+    apiKey: "AIzaSyDU27hc677qtmWRCIFly7v9PiLSRAVZRDg",
+    authDomain: "dare-dakke.firebaseapp.com",
+    projectId: "dare-dakke",
+    storageBucket: "dare-dakke.firebasestorage.app",
+    messagingSenderId: "40535203612",
+    appId: "1:40535203612:web:1d5527df7746258353e4d9",
+  };
+  // ▲▲▲ ここまで ▲▲▲
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  // 他のscriptタグ(Babel)から使えるようwindowに公開
+  window.__firebase = {
+    auth, db,
+    createUserWithEmailAndPassword, signInWithEmailAndPassword,
+    onAuthStateChanged, signOut, doc, setDoc, onSnapshot,
+  };
+  window.dispatchEvent(new Event("firebase-ready"));
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useRef } = React;
+
+function waitForFirebase() {
+  return new Promise((resolve) => {
+    if (window.__firebase) return resolve(window.__firebase);
+    window.addEventListener("firebase-ready", () => resolve(window.__firebase), { once: true });
+  });
+}
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const daysBetween = (a, b) => Math.floor((new Date(b) - new Date(a)) / 86400000);
+const fmtDaysAgo = (n) => {
+  if (n <= 0) return "今日";
+  if (n < 30) return `${n}日前`;
+  if (n < 365) return `${Math.round(n / 30)}ヶ月前`;
+  return `${Math.floor(n / 365)}年前`;
+};
+const fmtTenure = (dateStr) => {
+  const n = daysBetween(dateStr, todayStr());
+  if (n < 30) return `${n}日`;
+  if (n < 365) return `${Math.round(n / 30)}ヶ月`;
+  const y = Math.floor(n / 365);
+  const m = Math.round((n % 365) / 30);
+  return m > 0 ? `${y}年${m}ヶ月` : `${y}年`;
+};
+
+const INTERVAL_PRESETS = [
+  { label: "1ヶ月", days: 30 },
+  { label: "3ヶ月", days: 90 },
+  { label: "6ヶ月", days: 180 },
+];
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function resizeImageFile(file, maxDim = 220, quality = 0.6) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > h && w > maxDim) { h = Math.round(h * (maxDim / w)); w = maxDim; }
+        else if (h >= w && h > maxDim) { w = Math.round(w * (maxDim / h)); h = maxDim; }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = ev.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function intervalLabel(days) {
+  const preset = INTERVAL_PRESETS.find((p) => p.days === days);
+  if (preset) return preset.label;
+  return `${days}日`;
+}
+
+// ---------- Auth screen ----------
+function AuthScreen({ fb }) {
+  const [mode, setMode] = useState("login"); // "login" | "signup"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setError("");
+    if (!email || !password) { setError("メールアドレスとパスワードを入力してください"); return; }
+    setBusy(true);
+    try {
+      if (mode === "signup") {
+        await fb.createUserWithEmailAndPassword(fb.auth, email, password);
+      } else {
+        await fb.signInWithEmailAndPassword(fb.auth, email, password);
+      }
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+    setBusy(false);
+  };
+
+  const errorMessage = (e) => {
+    const code = e && e.code ? e.code : "";
+    if (code.includes("wrong-password") || code.includes("invalid-credential")) return "メールアドレスまたはパスワードが違います";
+    if (code.includes("email-already-in-use")) return "このメールアドレスは既に登録されています";
+    if (code.includes("weak-password")) return "パスワードは6文字以上にしてください";
+    if (code.includes("invalid-email")) return "メールアドレスの形式が正しくありません";
+    if (code.includes("user-not-found")) return "このメールアドレスは登録されていません";
+    return "エラーが発生しました。しばらくしてから再度お試しください。";
+  };
+
+  return (
+    <div style={{ ...styles.page, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ ...styles.modal, borderRadius: 6, maxWidth: 360 }}>
+        <div style={styles.headerTitleRow}>
+          <span style={styles.stampMark}>印</span>
+          <h1 style={styles.title}>名刺帳</h1>
+        </div>
+        <p style={{ ...styles.subtitle, marginBottom: 18 }}>
+          {mode === "login" ? "ログインして記録を見る" : "新しくアカウントを作る"}
+        </p>
+        <Field label="メールアドレス">
+          <input style={styles.input} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </Field>
+        <Field label="パスワード（6文字以上）">
+          <input style={styles.input} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        {error && <p style={{ color: "#B23A2E", fontSize: 12.5, marginTop: -4, marginBottom: 10 }}>{error}</p>}
+        <button style={{ ...styles.submitButton, ...(busy ? styles.submitButtonDisabled : {}) }} disabled={busy} onClick={submit}>
+          {busy ? "処理中…" : mode === "login" ? "ログイン" : "登録する"}
+        </button>
+        <button
+          style={{ ...styles.linkButton, marginTop: 14, fontSize: 12.5, justifyContent: "center", width: "100%" }}
+          onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }}
+        >
+          {mode === "login" ? "アカウントを持っていない方はこちら" : "既にアカウントをお持ちの方はこちら"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Main app ----------
+function PersonMemoryBook({ fb, user }) {
+  const [loaded, setLoaded] = useState(false);
+  const [people, setPeople] = useState([]);
+  const [settings, setSettings] = useState({ intervalDays: 90 });
+  const [view, setView] = useState("list");
+  const [showAdd, setShowAdd] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [transferFor, setTransferFor] = useState(null);
+  const [episodeFor, setEpisodeFor] = useState(null);
+  const [saveError, setSaveError] = useState(false);
+  const userDocRef = fb.doc(fb.db, "users", user.uid);
+  const skipNextWrite = useRef(false);
+
+  useEffect(() => {
+    const unsub = fb.onSnapshot(userDocRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        skipNextWrite.current = true;
+        setPeople(data.people || []);
+        setSettings(data.settings || { intervalDays: 90 });
+      }
+      setLoaded(true);
+    }, () => setLoaded(true));
+    return unsub;
+  }, []);
+
+  const persist = useCallback(async (nextPeople, nextSettings) => {
+    try {
+      const result = await fb.setDoc(userDocRef, { people: nextPeople, settings: nextSettings });
+      setSaveError(false);
+    } catch (e) {
+      setSaveError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (skipNextWrite.current) { skipNextWrite.current = false; return; }
+    persist(people, settings);
+  }, [people, settings, loaded, persist]);
+
+  const addPerson = (form) => {
+    const initialEpisodes = form.notes.trim() ? [{ date: form.metDate, note: form.notes.trim() }] : [];
+    const newPerson = {
+      id: uid(), name: form.name, workplace: form.workplace, role: form.role,
+      metDate: form.metDate, workplaceStart: form.workplaceStart, notes: form.notes,
+      photo: form.photo || null, lastReviewed: todayStr(), history: [], episodes: initialEpisodes,
+    };
+    setPeople((p) => [newPerson, ...p]);
+    setShowAdd(false);
+  };
+
+  const confirmReviewed = (id) => {
+    setPeople((p) => p.map((person) => (person.id === id ? { ...person, lastReviewed: todayStr() } : person)));
+  };
+
+  const doTransfer = (id, form) => {
+    setPeople((p) => p.map((person) => {
+      if (person.id !== id) return person;
+      const historyEntry = { workplace: person.workplace, role: person.role, startDate: person.workplaceStart, endDate: form.startDate };
+      return { ...person, workplace: form.workplace, role: form.role, workplaceStart: form.startDate, history: [...person.history, historyEntry] };
+    }));
+    setTransferFor(null);
+  };
+
+  const addEpisode = (id, form) => {
+    setPeople((p) => p.map((person) => {
+      if (person.id !== id) return person;
+      return { ...person, notes: form.note, lastReviewed: todayStr(), episodes: [...person.episodes, { date: form.date, note: form.note }] };
+    }));
+    setEpisodeFor(null);
+  };
+
+  const fadeAmount = (person) => {
+    const d = daysBetween(person.lastReviewed, todayStr());
+    return Math.min(1, Math.max(0, d / settings.intervalDays));
+  };
+  const isDue = (person) => fadeAmount(person) >= 1;
+  const dueList = [...people].filter(isDue).sort((a, b) => daysBetween(b.lastReviewed, todayStr()) - daysBetween(a.lastReviewed, todayStr()));
+
+  if (!loaded) {
+    return (
+      <div style={{ ...styles.page, alignItems: "center", justifyContent: "center", display: "flex" }}>
+        <div style={{ color: "#8a8477" }}>読み込み中…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={styles.headerTitleRow}>
+              <span style={styles.stampMark}>印</span>
+              <h1 style={styles.title}>名刺帳</h1>
+            </div>
+            <p style={styles.subtitle}>久しぶりに会った人を、忘れる前に。</p>
+          </div>
+          <button style={styles.logoutButton} onClick={() => fb.signOut(fb.auth)}>ログアウト</button>
+        </div>
+        <p style={{ fontSize: 11, color: "#8a8477", marginTop: 6, fontFamily: "'JetBrains Mono', monospace" }}>{user.email}</p>
+      </header>
+
+      <nav style={styles.tabs}>
+        <TabButton active={view === "list"} onClick={() => setView("list")} label="👥 一覧" />
+        <TabButton active={view === "review"} onClick={() => setView("review")} label={`🔄 復習${dueList.length > 0 ? ` (${dueList.length})` : ""}`} />
+        <TabButton active={view === "settings"} onClick={() => setView("settings")} label="⚙ 設定" />
+      </nav>
+
+      <main style={styles.main}>
+        {view === "list" && (
+          <React.Fragment>
+            <button style={styles.addButton} onClick={() => setShowAdd(true)}>＋ 新しく記録する</button>
+            {people.length === 0 ? (
+              <EmptyState text="まだ誰も記録していません。「新しく記録する」から始めましょう。" />
+            ) : (
+              <div style={styles.cardList}>
+                {people.map((person) => (
+                  <PersonCard key={person.id} person={person} fade={fadeAmount(person)}
+                    expanded={expandedId === person.id} onToggleExpand={() => setExpandedId(expandedId === person.id ? null : person.id)}
+                    onReviewed={() => confirmReviewed(person.id)} onTransfer={() => setTransferFor(person.id)}
+                    onEpisode={() => setEpisodeFor(person.id)} />
+                ))}
+              </div>
+            )}
+          </React.Fragment>
+        )}
+
+        {view === "review" && (
+          <React.Fragment>
+            <p style={styles.reviewIntro}>前回の設定（{intervalLabel(settings.intervalDays)}）を過ぎた記録です。読んで、思い出せたらスタンプを押しましょう。</p>
+            {dueList.length === 0 ? (
+              <EmptyState text="今、復習が必要な人はいません。よく覚えていますね。" />
+            ) : (
+              <div style={styles.cardList}>
+                {dueList.map((person) => (
+                  <PersonCard key={person.id} person={person} fade={1} expanded={true} onToggleExpand={() => {}}
+                    onReviewed={() => confirmReviewed(person.id)} onTransfer={() => setTransferFor(person.id)}
+                    onEpisode={() => setEpisodeFor(person.id)} reviewMode />
+                ))}
+              </div>
+            )}
+          </React.Fragment>
+        )}
+
+        {view === "settings" && <SettingsPanel settings={settings} setSettings={setSettings} />}
+      </main>
+
+      {saveError && <div style={styles.saveError}>保存に失敗しました。通信状態を確認してください。</div>}
+      {showAdd && <AddPersonModal onClose={() => setShowAdd(false)} onSubmit={addPerson} />}
+      {transferFor && <TransferModal person={people.find((p) => p.id === transferFor)} onClose={() => setTransferFor(null)} onSubmit={(form) => doTransfer(transferFor, form)} />}
+      {episodeFor && <EpisodeModal person={people.find((p) => p.id === episodeFor)} onClose={() => setEpisodeFor(null)} onSubmit={(form) => addEpisode(episodeFor, form)} />}
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, label }) {
+  return <button onClick={onClick} style={{ ...styles.tabButton, ...(active ? styles.tabButtonActive : {}) }}>{label}</button>;
+}
+
+function EmptyState({ text }) {
+  return (
+    <div style={styles.emptyState}>
+      <div style={styles.emptyStampRing}>?</div>
+      <p style={styles.emptyText}>{text}</p>
+    </div>
+  );
+}
+
+function Avatar({ photo, name, size = 52 }) {
+  if (photo) return <img src={photo} alt={name} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "1px solid #C9C3B5" }} />;
+  return (
+    <div style={{ width: size, height: size, borderRadius: "50%", background: "#E4E0D3", color: "#8a8477", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: "'Shippori Mincho', serif", fontSize: size * 0.4, border: "1px solid #C9C3B5" }}>
+      {name ? name.charAt(0) : "?"}
+    </div>
+  );
+}
+
+function PersonCard({ person, fade, expanded, onToggleExpand, onReviewed, onTransfer, onEpisode, reviewMode }) {
+  const daysAgo = daysBetween(person.lastReviewed, todayStr());
+  const grayscale = Math.round(fade * 70);
+  const opacity = 1 - fade * 0.35;
+  const episodes = person.episodes || [];
+
+  return (
+    <div style={{ ...styles.card, filter: `grayscale(${grayscale}%)`, opacity }}>
+      <div style={styles.cardPerforation} />
+      <div style={styles.cardTop}>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Avatar photo={person.photo} name={person.name} />
+          <div>
+            <div style={styles.cardName}>{person.name}</div>
+            <div style={styles.cardMeta}>📍 {person.workplace}{person.role ? `・${person.role}` : ""}</div>
+            <div style={styles.cardMeta}>🕒 この職場に {fmtTenure(person.workplaceStart)}（{person.workplaceStart}〜）</div>
+          </div>
+        </div>
+        <button onClick={onReviewed} title="思い出した" style={{ ...styles.stampButton, ...(fade >= 1 ? styles.stampButtonDue : {}) }}>
+          <span>✓</span><span style={{ fontSize: 11 }}>思い出した</span>
+        </button>
+      </div>
+
+      {person.notes && <div style={styles.cardNotes}>{person.notes}</div>}
+
+      <div style={styles.cardFooterRow}>
+        <span style={styles.cardTimestamp}>最後に思い出した: {fmtDaysAgo(daysAgo)}</span>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button style={styles.linkButton} onClick={onEpisode}>💬 再会を記録</button>
+          <button style={styles.linkButton} onClick={onTransfer}>⇄ 異動を記録</button>
+          {!reviewMode && (person.history.length > 0 || episodes.length > 0) && (
+            <button style={styles.linkButton} onClick={onToggleExpand}>履歴 {episodes.length + person.history.length}件 {expanded ? "▲" : "▼"}</button>
+          )}
+        </div>
+      </div>
+
+      {(expanded || (reviewMode && (episodes.length > 0 || person.history.length > 0))) && (
+        <React.Fragment>
+          {episodes.length > 0 && (
+            <div style={styles.historyBox}>
+              <div style={styles.historyLabel}>会った記録</div>
+              {[...episodes].reverse().map((ep, i) => (
+                <div key={i} style={styles.historyRow}><span style={styles.historyDates}>{ep.date}</span><span>{ep.note}</span></div>
+              ))}
+            </div>
+          )}
+          {person.history.length > 0 && (
+            <div style={styles.historyBox}>
+              <div style={styles.historyLabel}>異動履歴</div>
+              {[...person.history].reverse().map((h, i) => (
+                <div key={i} style={styles.historyRow}><span style={styles.historyDates}>{h.startDate} 〜 {h.endDate}</span><span>{h.workplace}{h.role ? `・${h.role}` : ""}</span></div>
+              ))}
+            </div>
+          )}
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+function PhotoField({ value, onChange }) {
+  const inputRef = useRef();
+  const [busy, setBusy] = useState(false);
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    try { onChange(await resizeImageFile(file)); } catch (err) {}
+    setBusy(false);
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <Avatar photo={value} name="" size={56} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <button type="button" style={styles.photoButton} onClick={() => inputRef.current.click()}>📷 {busy ? "処理中…" : value ? "写真を変更" : "写真を追加"}</button>
+        {value && <button type="button" style={styles.photoRemoveButton} onClick={() => onChange(null)}>削除</button>}
+        <input ref={inputRef} type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} />
+      </div>
+    </div>
+  );
+}
+
+function AddPersonModal({ onClose, onSubmit }) {
+  const [form, setForm] = useState({ name: "", workplace: "", role: "", metDate: todayStr(), workplaceStart: todayStr(), notes: "", photo: null });
+  const canSubmit = form.name.trim() && form.workplace.trim() && form.workplaceStart;
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHeader}><h2 style={styles.modalTitle}>新しく記録する</h2><button style={styles.iconButton} onClick={onClose}>✕</button></div>
+        <Field label="写真（任意）"><PhotoField value={form.photo} onChange={(photo) => setForm({ ...form, photo })} /></Field>
+        <Field label="名前 *"><input style={styles.input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="山田 太郎" /></Field>
+        <div style={styles.fieldRow}>
+          <Field label="勤務先 *"><input style={styles.input} value={form.workplace} onChange={(e) => setForm({ ...form, workplace: e.target.value })} placeholder="◯◯建設 △△支店" /></Field>
+          <Field label="役職"><input style={styles.input} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} placeholder="所長" /></Field>
+        </div>
+        <div style={styles.fieldRow}>
+          <Field label="会った日"><input type="date" style={styles.input} value={form.metDate} onChange={(e) => setForm({ ...form, metDate: e.target.value })} /></Field>
+          <Field label="その職場にいつから *"><input type="date" style={styles.input} value={form.workplaceStart} onChange={(e) => setForm({ ...form, workplaceStart: e.target.value })} /></Field>
+        </div>
+        <Field label="会ったときのエピソード"><textarea style={{ ...styles.input, height: 70, resize: "vertical" }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="どこで会ったか、話した内容など" /></Field>
+        <button style={{ ...styles.submitButton, ...(canSubmit ? {} : styles.submitButtonDisabled) }} disabled={!canSubmit} onClick={() => onSubmit(form)}>記録する</button>
+      </div>
+    </div>
+  );
+}
+
+function TransferModal({ person, onClose, onSubmit }) {
+  const [form, setForm] = useState({ workplace: "", role: "", startDate: todayStr() });
+  const canSubmit = form.workplace.trim() && form.startDate;
+  if (!person) return null;
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHeader}><h2 style={styles.modalTitle}>{person.name} さんの異動</h2><button style={styles.iconButton} onClick={onClose}>✕</button></div>
+        <p style={styles.modalSubtext}>現在: {person.workplace}{person.role ? `・${person.role}` : ""}（{person.workplaceStart}〜）が履歴に移ります。</p>
+        <div style={styles.fieldRow}>
+          <Field label="新しい勤務先 *"><input style={styles.input} value={form.workplace} onChange={(e) => setForm({ ...form, workplace: e.target.value })} placeholder="◯◯建設 本社" /></Field>
+          <Field label="役職"><input style={styles.input} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} placeholder="部長" /></Field>
+        </div>
+        <Field label="異動日 *"><input type="date" style={styles.input} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></Field>
+        <button style={{ ...styles.submitButton, ...(canSubmit ? {} : styles.submitButtonDisabled) }} disabled={!canSubmit} onClick={() => onSubmit(form)}>異動を記録する</button>
+      </div>
+    </div>
+  );
+}
+
+function EpisodeModal({ person, onClose, onSubmit }) {
+  const [form, setForm] = useState({ date: todayStr(), note: "" });
+  const canSubmit = form.note.trim() && form.date;
+  if (!person) return null;
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHeader}><h2 style={styles.modalTitle}>{person.name} さんと再会</h2><button style={styles.iconButton} onClick={onClose}>✕</button></div>
+        <Field label="会った日 *"><input type="date" style={styles.input} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
+        <Field label="エピソード *"><textarea style={{ ...styles.input, height: 70, resize: "vertical" }} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="どこで会ったか、話した内容など" /></Field>
+        <button style={{ ...styles.submitButton, ...(canSubmit ? {} : styles.submitButtonDisabled) }} disabled={!canSubmit} onClick={() => onSubmit(form)}>記録する</button>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return <div style={styles.field}><label style={styles.label}>{label}</label>{children}</div>;
+}
+
+function SettingsPanel({ settings, setSettings }) {
+  const [customDays, setCustomDays] = useState(INTERVAL_PRESETS.some((p) => p.days === settings.intervalDays) ? "" : String(settings.intervalDays));
+  return (
+    <div style={styles.settingsPanel}>
+      <h2 style={styles.settingsTitle}>復習の間隔</h2>
+      <p style={styles.settingsDesc}>どのくらいの頻度で記録を見返すか決めます。</p>
+      <div style={styles.presetRow}>
+        {INTERVAL_PRESETS.map((p) => (
+          <button key={p.days} onClick={() => { setSettings({ ...settings, intervalDays: p.days }); setCustomDays(""); }}
+            style={{ ...styles.presetButton, ...(settings.intervalDays === p.days ? styles.presetButtonActive : {}) }}>{p.label}</button>
+        ))}
+      </div>
+      <Field label="カスタム（日数）">
+        <input type="number" min="1" style={styles.input} value={customDays}
+          onChange={(e) => { setCustomDays(e.target.value); const n = parseInt(e.target.value, 10); if (n > 0) setSettings({ ...settings, intervalDays: n }); }}
+          placeholder="例: 45" />
+      </Field>
+      <p style={styles.settingsNote}>現在の設定: {intervalLabel(settings.intervalDays)}ごとに復習</p>
+      <p style={styles.settingsNote}>データはFirebaseに保存されるため、同じアカウントでログインすればどの端末からも同じ記録が見られます。</p>
+    </div>
+  );
+}
+
+const styles = {
+  page: { minHeight: "100vh", background: "#EFEDE4", fontFamily: "'Zen Kaku Gothic New', sans-serif", color: "#22262B", paddingBottom: 40 },
+  header: { padding: "28px 20px 14px", borderBottom: "1px solid #C9C3B5" },
+  headerTitleRow: { display: "flex", alignItems: "center", gap: 10 },
+  stampMark: { fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 15, color: "#F4EFE4", background: "#B23A2E", width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" },
+  title: { fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 26, margin: 0, letterSpacing: 1 },
+  subtitle: { margin: "6px 0 0", fontSize: 13, color: "#6B6558" },
+  logoutButton: { background: "none", border: "1px solid #C9C3B5", borderRadius: 3, padding: "6px 10px", fontSize: 12, color: "#6B6558", cursor: "pointer", fontFamily: "'Zen Kaku Gothic New', sans-serif", flexShrink: 0 },
+  tabs: { display: "flex", gap: 4, padding: "12px 16px 0", borderBottom: "1px solid #C9C3B5" },
+  tabButton: { display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", fontSize: 13, fontFamily: "'Zen Kaku Gothic New', sans-serif", background: "transparent", border: "none", borderBottom: "2px solid transparent", color: "#6B6558", cursor: "pointer" },
+  tabButtonActive: { color: "#22262B", borderBottom: "2px solid #B23A2E", fontWeight: 700 },
+  main: { padding: "18px 16px", maxWidth: 640, margin: "0 auto" },
+  addButton: { display: "flex", alignItems: "center", gap: 6, justifyContent: "center", width: "100%", padding: "12px", marginBottom: 16, background: "#22262B", color: "#EFEDE4", border: "none", borderRadius: 3, fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: 14, fontWeight: 500, cursor: "pointer" },
+  cardList: { display: "flex", flexDirection: "column", gap: 12 },
+  card: { position: "relative", background: "#FAF8F2", border: "1px solid #C9C3B5", borderRadius: 2, padding: "16px 16px 12px", boxShadow: "2px 2px 0 rgba(34,38,43,0.06)", transition: "opacity 0.4s ease, filter 0.4s ease" },
+  cardPerforation: { position: "absolute", top: 0, left: 16, right: 16, height: 1, backgroundImage: "repeating-linear-gradient(90deg, #C9C3B5 0 4px, transparent 4px 9px)" },
+  cardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
+  cardName: { fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 18, marginBottom: 4 },
+  cardMeta: { display: "flex", alignItems: "center", fontSize: 12.5, color: "#4A5058", marginTop: 2, gap: 4 },
+  cardNotes: { marginTop: 10, fontSize: 13, color: "#4A5058", background: "#F0EEE4", padding: "8px 10px", borderRadius: 2, borderLeft: "2px solid #C9C3B5" },
+  cardFooterRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, flexWrap: "wrap", gap: 8 },
+  cardTimestamp: { fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#8a8477" },
+  linkButton: { display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: "#6B6558", fontSize: 11.5, cursor: "pointer", padding: 0, fontFamily: "'Zen Kaku Gothic New', sans-serif" },
+  stampButton: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2, border: "1.5px solid #B23A2E", color: "#B23A2E", background: "transparent", borderRadius: "50%", width: 56, height: 56, cursor: "pointer", flexShrink: 0, fontFamily: "'Zen Kaku Gothic New', sans-serif" },
+  stampButtonDue: { background: "#B23A2E", color: "#F4EFE4" },
+  historyBox: { marginTop: 10, paddingTop: 10, borderTop: "1px dashed #C9C3B5", display: "flex", flexDirection: "column", gap: 6 },
+  historyLabel: { fontSize: 11, color: "#8a8477", fontWeight: 700, marginBottom: 2 },
+  historyRow: { display: "flex", justifyContent: "space-between", fontSize: 12, color: "#4A5058", gap: 10 },
+  historyDates: { fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#8a8477", flexShrink: 0 },
+  reviewIntro: { fontSize: 13, color: "#6B6558", marginBottom: 14, lineHeight: 1.6 },
+  emptyState: { textAlign: "center", padding: "50px 20px", color: "#8a8477" },
+  emptyStampRing: { width: 48, height: 48, borderRadius: "50%", border: "1.5px dashed #C9C3B5", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px", fontFamily: "'Shippori Mincho', serif", fontSize: 18 },
+  emptyText: { fontSize: 13.5, lineHeight: 1.6, maxWidth: 320, margin: "0 auto" },
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(34,38,43,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 },
+  modal: { background: "#FAF8F2", width: "100%", maxWidth: 480, borderRadius: "10px 10px 0 0", padding: "20px 20px 26px", maxHeight: "88vh", overflowY: "auto" },
+  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  modalTitle: { fontFamily: "'Shippori Mincho', serif", fontSize: 18, fontWeight: 700, margin: 0 },
+  modalSubtext: { fontSize: 12.5, color: "#6B6558", marginBottom: 14, lineHeight: 1.5 },
+  iconButton: { background: "none", border: "none", cursor: "pointer", color: "#22262B", padding: 4, fontSize: 16 },
+  field: { marginBottom: 12, flex: 1 },
+  fieldRow: { display: "flex", gap: 10 },
+  label: { display: "block", fontSize: 12, color: "#6B6558", marginBottom: 4, fontWeight: 500 },
+  input: { width: "100%", padding: "9px 10px", border: "1px solid #C9C3B5", borderRadius: 3, fontSize: 14, fontFamily: "'Zen Kaku Gothic New', sans-serif", background: "#fff", boxSizing: "border-box", color: "#22262B" },
+  photoButton: { display: "flex", alignItems: "center", gap: 5, padding: "6px 10px", border: "1px solid #C9C3B5", background: "#fff", borderRadius: 3, fontSize: 12, cursor: "pointer", fontFamily: "'Zen Kaku Gothic New', sans-serif" },
+  photoRemoveButton: { display: "flex", alignItems: "center", gap: 5, padding: "4px 8px", border: "none", background: "none", color: "#B23A2E", borderRadius: 3, fontSize: 11.5, cursor: "pointer", fontFamily: "'Zen Kaku Gothic New', sans-serif" },
+  submitButton: { width: "100%", padding: "12px", marginTop: 6, background: "#B23A2E", color: "#F4EFE4", border: "none", borderRadius: 3, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Zen Kaku Gothic New', sans-serif" },
+  submitButtonDisabled: { background: "#C9C3B5", cursor: "not-allowed" },
+  settingsPanel: { background: "#FAF8F2", border: "1px solid #C9C3B5", borderRadius: 3, padding: 18 },
+  settingsTitle: { fontFamily: "'Shippori Mincho', serif", fontSize: 18, margin: "0 0 6px" },
+  settingsDesc: { fontSize: 13, color: "#6B6558", marginBottom: 14 },
+  presetRow: { display: "flex", gap: 8, marginBottom: 14 },
+  presetButton: { flex: 1, padding: "9px 0", border: "1px solid #C9C3B5", background: "#fff", borderRadius: 3, fontSize: 13, cursor: "pointer", fontFamily: "'Zen Kaku Gothic New', sans-serif" },
+  presetButtonActive: { background: "#22262B", color: "#EFEDE4", borderColor: "#22262B" },
+  settingsNote: { fontSize: 12.5, color: "#8a8477", marginTop: 8 },
+  saveError: { position: "fixed", bottom: 12, left: "50%", transform: "translateX(-50%)", background: "#B23A2E", color: "#fff", padding: "8px 14px", borderRadius: 4, fontSize: 12.5 },
+};
+
+// ---------- Root: waits for Firebase, handles auth state ----------
+function Root() {
+  const [fb, setFb] = useState(null);
+  const [user, setUser] = useState(undefined); // undefined = loading, null = signed out
+
+  useEffect(() => {
+    waitForFirebase().then((firebase) => {
+      setFb(firebase);
+      firebase.onAuthStateChanged(firebase.auth, (u) => setUser(u || null));
+    });
+  }, []);
+
+  if (!fb || user === undefined) {
+    return <div style={{ ...styles.page, display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ color: "#8a8477" }}>読み込み中…</div></div>;
+  }
+  if (!user) return <AuthScreen fb={fb} />;
+  return <PersonMemoryBook fb={fb} user={user} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
+</script>
+</body>
+</html>
