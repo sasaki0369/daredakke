@@ -84,6 +84,7 @@ const fmtDaysAgo = (n) => {
   return `${Math.floor(n / 365)}年前`;
 };
 const fmtTenure = (dateStr) => {
+  if (!dateStr) return null;
   const n = daysBetween(dateStr, todayStr());
   if (n < 30) return `${n}日`;
   if (n < 365) return `${Math.round(n / 30)}ヶ月`;
@@ -421,7 +422,7 @@ function PersonCard({ person, fade, expanded, onToggleExpand, onReviewed, onTran
           <div>
             <div style={styles.cardName}>{person.name}</div>
             <div style={styles.cardMeta}>📍 {person.workplace}{person.role ? `・${person.role}` : ""}</div>
-            <div style={styles.cardMeta}>🕒 この職場に {fmtTenure(person.workplaceStart)}（{person.workplaceStart}〜）</div>
+            <div style={styles.cardMeta}>🕒 {person.workplaceStart ? `この職場に ${fmtTenure(person.workplaceStart)}（${person.workplaceStart}〜）` : "この職場にいつからかは不明"}</div>
           </div>
         </div>
         <button onClick={onReviewed} title="思い出した" style={{ ...styles.stampButton, ...(fade >= 1 ? styles.stampButtonDue : {}) }}>
@@ -457,7 +458,7 @@ function PersonCard({ person, fade, expanded, onToggleExpand, onReviewed, onTran
             <div style={styles.historyBox}>
               <div style={styles.historyLabel}>異動履歴</div>
               {[...person.history].reverse().map((h, i) => (
-                <div key={i} style={styles.historyRow}><span style={styles.historyDates}>{h.startDate} 〜 {h.endDate}</span><span>{h.workplace}{h.role ? `・${h.role}` : ""}</span></div>
+                <div key={i} style={styles.historyRow}><span style={styles.historyDates}>{h.startDate || "不明"} 〜 {h.endDate}</span><span>{h.workplace}{h.role ? `・${h.role}` : ""}</span></div>
               ))}
             </div>
           )}
@@ -489,9 +490,34 @@ function PhotoField({ value, onChange }) {
   );
 }
 
+function DateOrUnknownField({ label, value, onChange }) {
+  const unknown = !value;
+  return (
+    <Field label={label}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          type="date"
+          style={{ ...styles.input, opacity: unknown ? 0.5 : 1 }}
+          value={value || ""}
+          disabled={unknown}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#6B6558", whiteSpace: "nowrap" }}>
+          <input
+            type="checkbox"
+            checked={unknown}
+            onChange={(e) => onChange(e.target.checked ? "" : todayStr())}
+          />
+          不明
+        </label>
+      </div>
+    </Field>
+  );
+}
+
 function AddPersonModal({ onClose, onSubmit }) {
   const [form, setForm] = useState({ name: "", workplace: "", role: "", metDate: todayStr(), workplaceStart: todayStr(), notes: "", photo: null });
-  const canSubmit = form.name.trim() && form.workplace.trim() && form.workplaceStart;
+  const canSubmit = form.name.trim() && form.workplace.trim();
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
@@ -504,7 +530,7 @@ function AddPersonModal({ onClose, onSubmit }) {
         </div>
         <div style={styles.fieldRow}>
           <Field label="会った日"><input type="date" style={styles.input} value={form.metDate} onChange={(e) => setForm({ ...form, metDate: e.target.value })} /></Field>
-          <Field label="その職場にいつから *"><input type="date" style={styles.input} value={form.workplaceStart} onChange={(e) => setForm({ ...form, workplaceStart: e.target.value })} /></Field>
+          <DateOrUnknownField label="その職場にいつから" value={form.workplaceStart} onChange={(v) => setForm({ ...form, workplaceStart: v })} />
         </div>
         <Field label="会ったときのエピソード"><textarea style={{ ...styles.input, height: 70, resize: "vertical" }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="どこで会ったか、話した内容など" /></Field>
         <button style={{ ...styles.submitButton, ...(canSubmit ? {} : styles.submitButtonDisabled) }} disabled={!canSubmit} onClick={() => onSubmit(form)}>記録する</button>
@@ -519,7 +545,7 @@ function EditPersonModal({ person, onClose, onSubmit, onDelete }) {
     metDate: person.metDate, workplaceStart: person.workplaceStart,
     notes: person.notes || "", photo: person.photo || null,
   });
-  const canSubmit = form.name.trim() && form.workplace.trim() && form.workplaceStart;
+  const canSubmit = form.name.trim() && form.workplace.trim();
 
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
@@ -534,7 +560,7 @@ function EditPersonModal({ person, onClose, onSubmit, onDelete }) {
         </div>
         <div style={styles.fieldRow}>
           <Field label="会った日"><input type="date" style={styles.input} value={form.metDate} onChange={(e) => setForm({ ...form, metDate: e.target.value })} /></Field>
-          <Field label="その職場にいつから *"><input type="date" style={styles.input} value={form.workplaceStart} onChange={(e) => setForm({ ...form, workplaceStart: e.target.value })} /></Field>
+          <DateOrUnknownField label="その職場にいつから" value={form.workplaceStart} onChange={(v) => setForm({ ...form, workplaceStart: v })} />
         </div>
         <Field label="メモ（最新のエピソード表示）"><textarea style={{ ...styles.input, height: 70, resize: "vertical" }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
 
@@ -564,7 +590,7 @@ function TransferModal({ person, onClose, onSubmit }) {
     <div style={styles.modalOverlay} onClick={onClose}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.modalHeader}><h2 style={styles.modalTitle}>{person.name} さんの異動</h2><button style={styles.iconButton} onClick={onClose}>✕</button></div>
-        <p style={styles.modalSubtext}>現在: {person.workplace}{person.role ? `・${person.role}` : ""}（{person.workplaceStart}〜）が履歴に移ります。</p>
+        <p style={styles.modalSubtext}>現在: {person.workplace}{person.role ? `・${person.role}` : ""}（{person.workplaceStart || "開始日不明"}〜）が履歴に移ります。</p>
         <div style={styles.fieldRow}>
           <Field label="新しい勤務先 *"><input style={styles.input} value={form.workplace} onChange={(e) => setForm({ ...form, workplace: e.target.value })} placeholder="◯◯建設 本社" /></Field>
           <Field label="役職"><input style={styles.input} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} placeholder="部長" /></Field>
