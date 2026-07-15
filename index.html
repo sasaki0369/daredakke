@@ -207,6 +207,7 @@ function PersonMemoryBook({ fb, user }) {
   const [transferFor, setTransferFor] = useState(null);
   const [episodeFor, setEpisodeFor] = useState(null);
   const [editFor, setEditFor] = useState(null);
+  const [detailFor, setDetailFor] = useState(null);
   const [saveError, setSaveError] = useState(false);
   const userDocRef = fb.doc(fb.db, "users", user.uid);
   const skipNextWrite = useRef(false);
@@ -342,7 +343,7 @@ function PersonMemoryBook({ fb, user }) {
                   <PersonCard key={person.id} person={person} fade={fadeAmount(person)}
                     expanded={expandedId === person.id} onToggleExpand={() => setExpandedId(expandedId === person.id ? null : person.id)}
                     onReviewed={() => confirmReviewed(person.id)} onTransfer={() => setTransferFor(person.id)}
-                    onEpisode={() => setEpisodeFor(person.id)} onEdit={() => setEditFor(person.id)} />
+                    onEpisode={() => setEpisodeFor(person.id)} onEdit={() => setEditFor(person.id)} onOpenDetail={() => setDetailFor(person.id)} />
                 ))}
               </div>
             )}
@@ -359,7 +360,7 @@ function PersonMemoryBook({ fb, user }) {
                 {dueList.map((person) => (
                   <PersonCard key={person.id} person={person} fade={1} expanded={true} onToggleExpand={() => {}}
                     onReviewed={() => confirmReviewed(person.id)} onTransfer={() => setTransferFor(person.id)}
-                    onEpisode={() => setEpisodeFor(person.id)} onEdit={() => setEditFor(person.id)} reviewMode />
+                    onEpisode={() => setEpisodeFor(person.id)} onEdit={() => setEditFor(person.id)} onOpenDetail={() => setDetailFor(person.id)} reviewMode />
                 ))}
               </div>
             )}
@@ -373,6 +374,13 @@ function PersonMemoryBook({ fb, user }) {
       {showAdd && <AddPersonModal onClose={() => setShowAdd(false)} onSubmit={addPerson} />}
       {transferFor && <TransferModal person={people.find((p) => p.id === transferFor)} onClose={() => setTransferFor(null)} onSubmit={(form) => doTransfer(transferFor, form)} />}
       {episodeFor && <EpisodeModal person={people.find((p) => p.id === episodeFor)} onClose={() => setEpisodeFor(null)} onSubmit={(form) => addEpisode(episodeFor, form)} />}
+      {detailFor && (
+        <DetailModal
+          person={people.find((p) => p.id === detailFor)}
+          onClose={() => setDetailFor(null)}
+          onReviewed={() => confirmReviewed(detailFor)}
+        />
+      )}
       {editFor && (
         <EditPersonModal
           person={people.find((p) => p.id === editFor)}
@@ -407,7 +415,55 @@ function Avatar({ photo, name, size = 52 }) {
   );
 }
 
-function PersonCard({ person, fade, expanded, onToggleExpand, onReviewed, onTransfer, onEpisode, onEdit, reviewMode }) {
+function DetailModal({ person, onClose, onReviewed }) {
+  const daysAgo = daysBetween(person.lastReviewed, todayStr());
+  const episodes = person.episodes || [];
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.detailModal} onClick={(e) => e.stopPropagation()}>
+        <button style={{ ...styles.iconButton, position: "absolute", top: 14, right: 14 }} onClick={onClose} title="閉じる">✕</button>
+
+        <div style={styles.detailTop}>
+          <Avatar photo={person.photo} name={person.name} size={104} />
+          <div style={styles.detailName}>{person.name}</div>
+        </div>
+
+        <div style={styles.detailRow}>📍 <span>{person.workplace}{person.role ? `・${person.role}` : ""}</span></div>
+        <div style={styles.detailRow}>
+          🕒 <span>{person.workplaceStart ? `この職場に ${fmtTenure(person.workplaceStart)}（${person.workplaceStart}〜）` : "この職場にいつからかは不明"}</span>
+        </div>
+        <div style={styles.detailRow}>🗓 <span>会った日: {person.metDate}</span></div>
+
+        {person.notes && <div style={styles.detailNotes}>{person.notes}</div>}
+
+        {episodes.length > 0 && (
+          <div style={styles.detailSection}>
+            <div style={styles.detailSectionTitle}>会った記録</div>
+            {[...episodes].reverse().map((ep, i) => (
+              <div key={i} style={styles.detailHistoryRow}><span style={styles.historyDates}>{ep.date}</span><span>{ep.note}</span></div>
+            ))}
+          </div>
+        )}
+
+        {person.history.length > 0 && (
+          <div style={styles.detailSection}>
+            <div style={styles.detailSectionTitle}>異動履歴</div>
+            {[...person.history].reverse().map((h, i) => (
+              <div key={i} style={styles.detailHistoryRow}><span style={styles.historyDates}>{h.startDate || "不明"} 〜 {h.endDate}</span><span>{h.workplace}{h.role ? `・${h.role}` : ""}</span></div>
+            ))}
+          </div>
+        )}
+
+        <div style={styles.detailFooter}>
+          <span style={styles.cardTimestamp}>最後に思い出した: {fmtDaysAgo(daysAgo)}</span>
+          <button onClick={() => { onReviewed(); onClose(); }} style={styles.detailStampButton}>✓ 思い出した</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PersonCard({ person, fade, expanded, onToggleExpand, onReviewed, onTransfer, onEpisode, onEdit, onOpenDetail, reviewMode }) {
   const daysAgo = daysBetween(person.lastReviewed, todayStr());
   const grayscale = Math.round(fade * 70);
   const opacity = 1 - fade * 0.35;
@@ -417,7 +473,7 @@ function PersonCard({ person, fade, expanded, onToggleExpand, onReviewed, onTran
     <div style={{ ...styles.card, filter: `grayscale(${grayscale}%)`, opacity }}>
       <div style={styles.cardPerforation} />
       <div style={styles.cardTop}>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, cursor: "pointer" }} onClick={onOpenDetail}>
           <Avatar photo={person.photo} name={person.name} />
           <div>
             <div style={styles.cardName}>{person.name}</div>
@@ -680,6 +736,23 @@ const styles = {
   emptyText: { fontSize: 13.5, lineHeight: 1.6, maxWidth: 320, margin: "0 auto" },
   modalOverlay: { position: "fixed", inset: 0, background: "rgba(34,38,43,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 },
   modal: { background: "#FAF8F2", width: "100%", maxWidth: 480, borderRadius: "10px 10px 0 0", padding: "20px 20px 26px", maxHeight: "88vh", overflowY: "auto" },
+  detailModal: {
+    position: "relative", background: "#FAF8F2", width: "100%", maxWidth: 480,
+    borderRadius: "14px 14px 0 0", padding: "34px 22px 24px", maxHeight: "90vh", overflowY: "auto",
+    boxShadow: "0 -4px 24px rgba(34,38,43,0.18)",
+  },
+  detailTop: { display: "flex", flexDirection: "column", alignItems: "center", gap: 12, marginBottom: 18 },
+  detailName: { fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 26, color: "#22262B", textAlign: "center" },
+  detailRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 15.5, color: "#22262B", padding: "8px 0", borderBottom: "1px solid #E4E0D3" },
+  detailNotes: { marginTop: 14, fontSize: 14.5, color: "#22262B", background: "#F0EEE4", padding: "12px 14px", borderRadius: 4, borderLeft: "3px solid #B23A2E", lineHeight: 1.7 },
+  detailSection: { marginTop: 18 },
+  detailSectionTitle: { fontFamily: "'Shippori Mincho', serif", fontSize: 13.5, fontWeight: 700, color: "#6B6558", marginBottom: 8 },
+  detailHistoryRow: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13.5, color: "#22262B", padding: "6px 0", borderBottom: "1px dashed #E4E0D3" },
+  detailFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24, paddingTop: 16, borderTop: "1px solid #E4E0D3" },
+  detailStampButton: {
+    display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", background: "#B23A2E", color: "#F4EFE4",
+    border: "none", borderRadius: 6, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Zen Kaku Gothic New', sans-serif",
+  },
   modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
   modalTitle: { fontFamily: "'Shippori Mincho', serif", fontSize: 18, fontWeight: 700, margin: 0 },
   modalSubtext: { fontSize: 12.5, color: "#6B6558", marginBottom: 14, lineHeight: 1.5 },
