@@ -796,6 +796,15 @@ function DateOrUnknownField({ label, value, onChange }) {
   );
 }
 
+function SecretToggle({ checked, onChange }) {
+  return (
+    <label title="シークレットにする" style={styles.secretToggle}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ display: "none" }} />
+      <span style={{ fontSize: 20, opacity: checked ? 1 : 0.3 }}>🔒</span>
+    </label>
+  );
+}
+
 function AddPersonModal({ onClose, onSubmit }) {
   const [form, setForm] = useState({ name: "", workplace: "", role: "", metDate: todayStr(), workplaceStart: todayStr(), notes: "", photo: null, secret: false });
   const canSubmit = form.name.trim() && form.workplace.trim();
@@ -804,7 +813,12 @@ function AddPersonModal({ onClose, onSubmit }) {
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.modalHeader}><h2 style={styles.modalTitle}>新しく記録する</h2><button style={styles.iconButton} onClick={onClose}>✕</button></div>
         <Field label="写真（任意）"><PhotoField value={form.photo} onChange={(photo) => setForm({ ...form, photo })} /></Field>
-        <Field label="名前 *"><input style={styles.input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="山田 太郎" /></Field>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            <Field label="名前 *"><input style={styles.input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="山田 太郎" /></Field>
+          </div>
+          <SecretToggle checked={form.secret} onChange={(v) => setForm({ ...form, secret: v })} />
+        </div>
         <div style={styles.fieldRow}>
           <Field label="勤務先 *"><input style={styles.input} value={form.workplace} onChange={(e) => setForm({ ...form, workplace: e.target.value })} placeholder="◯◯建設 △△支店" /></Field>
           <Field label="役職"><input style={styles.input} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} placeholder="所長" /></Field>
@@ -814,10 +828,6 @@ function AddPersonModal({ onClose, onSubmit }) {
           <DateOrUnknownField label="その職場にいつから" value={form.workplaceStart} onChange={(v) => setForm({ ...form, workplaceStart: v })} />
         </div>
         <Field label="会ったときのエピソード"><textarea style={{ ...styles.input, height: 70, resize: "vertical" }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="どこで会ったか、話した内容など" /></Field>
-        <label style={styles.secretCheckboxRow}>
-          <input type="checkbox" checked={form.secret} onChange={(e) => setForm({ ...form, secret: e.target.checked })} />
-          🔒 シークレットにする（特別な操作をしないと一覧に表示されません）
-        </label>
         <button style={{ ...styles.submitButton, ...(canSubmit ? {} : styles.submitButtonDisabled) }} disabled={!canSubmit} onClick={() => onSubmit(form)}>記録する</button>
       </div>
     </div>
@@ -838,7 +848,12 @@ function EditPersonModal({ person, onClose, onSubmit, onDelete }) {
         <div style={styles.modalHeader}><h2 style={styles.modalTitle}>{person.name} さんを編集</h2><button style={styles.iconButton} onClick={onClose}>✕</button></div>
 
         <Field label="写真"><PhotoField value={form.photo} onChange={(photo) => setForm({ ...form, photo })} /></Field>
-        <Field label="名前 *"><input style={styles.input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            <Field label="名前 *"><input style={styles.input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+          </div>
+          <SecretToggle checked={form.secret} onChange={(v) => setForm({ ...form, secret: v })} />
+        </div>
         <div style={styles.fieldRow}>
           <Field label="勤務先 *"><input style={styles.input} value={form.workplace} onChange={(e) => setForm({ ...form, workplace: e.target.value })} /></Field>
           <Field label="役職"><input style={styles.input} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} /></Field>
@@ -848,10 +863,6 @@ function EditPersonModal({ person, onClose, onSubmit, onDelete }) {
           <DateOrUnknownField label="その職場にいつから" value={form.workplaceStart} onChange={(v) => setForm({ ...form, workplaceStart: v })} />
         </div>
         <Field label="メモ（最新のエピソード表示）"><textarea style={{ ...styles.input, height: 70, resize: "vertical" }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
-        <label style={styles.secretCheckboxRow}>
-          <input type="checkbox" checked={form.secret} onChange={(e) => setForm({ ...form, secret: e.target.checked })} />
-          🔒 シークレットにする（特別な操作をしないと一覧に表示されません）
-        </label>
 
         <p style={{ fontSize: 11.5, color: "#8a8477", marginTop: -4, marginBottom: 12 }}>
           ※ 異動履歴・会った記録の一覧はここでは編集できません。新しい異動や再会は「異動を記録」「再会を記録」から追加してください。
@@ -953,9 +964,10 @@ const styles = {
   tabButton: { display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", fontSize: 13, fontFamily: "'Zen Kaku Gothic New', sans-serif", background: "transparent", border: "none", borderBottom: "2px solid transparent", color: "#6B6558", cursor: "pointer" },
   tabButtonActive: { color: "#22262B", borderBottom: "2px solid #B23A2E", fontWeight: 700 },
   main: { padding: "18px 16px", maxWidth: 640, margin: "0 auto" },
-  secretCheckboxRow: {
-    display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#6B6558",
-    marginBottom: 14, marginTop: -2,
+  secretToggle: {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 44, height: 44, borderRadius: 4, border: "1px solid #C9C3B5", background: "#fff",
+    cursor: "pointer", flexShrink: 0, marginBottom: 12,
   },
   secretBanner: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
