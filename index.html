@@ -307,8 +307,10 @@ function PersonMemoryBook({ fb, user }) {
   const dueList = [...visiblePeople].filter(isDue).sort((a, b) => daysBetween(b.lastReviewed, todayStr()) - daysBetween(a.lastReviewed, todayStr()));
 
   const handleStampPressStart = () => {
+    if (navigator.vibrate) navigator.vibrate(15);
     if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
     pressTimerRef.current = setTimeout(() => {
+      if (navigator.vibrate) navigator.vibrate([30, 60, 30]);
       setSecretUnlocked((v) => !v);
       pressTimerRef.current = null;
     }, 3000);
