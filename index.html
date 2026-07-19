@@ -210,6 +210,7 @@ function PersonMemoryBook({ fb, user }) {
   const [detailFor, setDetailFor] = useState(null);
   const [saveError, setSaveError] = useState(false);
   const [secretUnlocked, setSecretUnlocked] = useState(false);
+  const [isPressingStamp, setIsPressingStamp] = useState(false);
   const pressTimerRef = useRef(null);
   const userDocRef = fb.doc(fb.db, "users", user.uid);
   const skipNextWrite = useRef(false);
@@ -307,16 +308,16 @@ function PersonMemoryBook({ fb, user }) {
   const dueList = [...visiblePeople].filter(isDue).sort((a, b) => daysBetween(b.lastReviewed, todayStr()) - daysBetween(a.lastReviewed, todayStr()));
 
   const handleStampPressStart = () => {
-    if (navigator.vibrate) navigator.vibrate(15);
+    setIsPressingStamp(true);
     if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
     pressTimerRef.current = setTimeout(() => {
-      if (navigator.vibrate) navigator.vibrate([30, 60, 30]);
       setSecretUnlocked((v) => !v);
       pressTimerRef.current = null;
     }, 3000);
   };
 
   const handleStampPressEnd = () => {
+    setIsPressingStamp(false);
     if (pressTimerRef.current) {
       clearTimeout(pressTimerRef.current);
       pressTimerRef.current = null;
@@ -338,7 +339,7 @@ function PersonMemoryBook({ fb, user }) {
           <div>
             <div style={styles.headerTitleRow}>
               <span
-                style={{ ...styles.stampMark, userSelect: "none", WebkitTouchCallout: "none" }}
+                style={{ ...styles.stampMark, ...(isPressingStamp ? styles.stampMarkPressed : {}), userSelect: "none", WebkitTouchCallout: "none" }}
                 onPointerDown={handleStampPressStart}
                 onPointerUp={handleStampPressEnd}
                 onPointerLeave={handleStampPressEnd}
@@ -934,7 +935,8 @@ const styles = {
   page: { minHeight: "100vh", background: "#EFEDE4", fontFamily: "'Zen Kaku Gothic New', sans-serif", color: "#22262B", paddingBottom: 40 },
   header: { padding: "28px 20px 14px", borderBottom: "1px solid #C9C3B5" },
   headerTitleRow: { display: "flex", alignItems: "center", gap: 10 },
-  stampMark: { fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 24, color: "#F4EFE4", background: "#B23A2E", width: 46, height: 46, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  stampMark: { fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 24, color: "#F4EFE4", background: "#B23A2E", width: 46, height: 46, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "background-color 0.15s ease, transform 0.15s ease" },
+  stampMarkPressed: { background: "#7A2018", transform: "scale(0.92)" },
   title: { fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 26, margin: 0, letterSpacing: 1 },
   subtitle: { margin: "6px 0 0", fontSize: 13, color: "#6B6558" },
   logoutButton: { background: "none", border: "1px solid #C9C3B5", borderRadius: 3, padding: "6px 10px", fontSize: 12, color: "#6B6558", cursor: "pointer", fontFamily: "'Zen Kaku Gothic New', sans-serif", flexShrink: 0 },
