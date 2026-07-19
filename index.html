@@ -209,6 +209,9 @@ function PersonMemoryBook({ fb, user }) {
   const [editFor, setEditFor] = useState(null);
   const [detailFor, setDetailFor] = useState(null);
   const [saveError, setSaveError] = useState(false);
+  const [secretUnlocked, setSecretUnlocked] = useState(false);
+  const tapCountRef = useRef(0);
+  const tapTimerRef = useRef(null);
   const userDocRef = fb.doc(fb.db, "users", user.uid);
   const skipNextWrite = useRef(false);
 
@@ -246,6 +249,7 @@ function PersonMemoryBook({ fb, user }) {
       id: uid(), name: form.name, workplace: form.workplace, role: form.role,
       metDate: form.metDate, workplaceStart: form.workplaceStart, notes: form.notes,
       photo: form.photo || null, lastReviewed: todayStr(), history: [], episodes: initialEpisodes,
+      secret: !!form.secret,
     };
     setPeople((p) => [newPerson, ...p]);
     setShowAdd(false);
@@ -284,6 +288,7 @@ function PersonMemoryBook({ fb, user }) {
         workplaceStart: form.workplaceStart,
         notes: form.notes,
         photo: form.photo,
+        secret: !!form.secret,
       };
     }));
     setEditFor(null);
@@ -299,7 +304,18 @@ function PersonMemoryBook({ fb, user }) {
     return Math.min(1, Math.max(0, d / settings.intervalDays));
   };
   const isDue = (person) => fadeAmount(person) >= 1;
-  const dueList = [...people].filter(isDue).sort((a, b) => daysBetween(b.lastReviewed, todayStr()) - daysBetween(a.lastReviewed, todayStr()));
+  const visiblePeople = people.filter((p) => !p.secret || secretUnlocked);
+  const dueList = [...visiblePeople].filter(isDue).sort((a, b) => daysBetween(b.lastReviewed, todayStr()) - daysBetween(a.lastReviewed, todayStr()));
+
+  const handleStampTap = () => {
+    tapCountRef.current += 1;
+    clearTimeout(tapTimerRef.current);
+    tapTimerRef.current = setTimeout(() => { tapCountRef.current = 0; }, 1500);
+    if (tapCountRef.current >= 5) {
+      tapCountRef.current = 0;
+      setSecretUnlocked((v) => !v);
+    }
+  };
 
   if (!loaded) {
     return (
@@ -315,7 +331,7 @@ function PersonMemoryBook({ fb, user }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={styles.headerTitleRow}>
-              <span style={styles.stampMark}>印</span>
+              <span style={styles.stampMark} onClick={handleStampTap}>印</span>
               <h1 style={styles.title}>名刺帳</h1>
             </div>
             <p style={styles.subtitle}>久しぶりに会った人を、忘れる前に。</p>
@@ -334,12 +350,18 @@ function PersonMemoryBook({ fb, user }) {
       <main style={styles.main}>
         {view === "list" && (
           <React.Fragment>
+            {secretUnlocked && (
+              <div style={styles.secretBanner}>
+                <span>🔓 シークレット表示中</span>
+                <button style={styles.secretHideButton} onClick={() => setSecretUnlocked(false)}>隠す</button>
+              </div>
+            )}
             <button style={styles.addButton} onClick={() => setShowAdd(true)}>＋ 新しく記録する</button>
-            {people.length === 0 ? (
+            {visiblePeople.length === 0 ? (
               <EmptyState text="まだ誰も記録していません。「新しく記録する」から始めましょう。" />
             ) : (
               <div style={styles.cardList}>
-                {people.map((person) => (
+                {visiblePeople.map((person) => (
                   <PersonCard key={person.id} person={person} fade={fadeAmount(person)}
                     expanded={expandedId === person.id} onToggleExpand={() => setExpandedId(expandedId === person.id ? null : person.id)}
                     onReviewed={() => confirmReviewed(person.id)} onTransfer={() => setTransferFor(person.id)}
@@ -476,7 +498,7 @@ function PersonCard({ person, fade, expanded, onToggleExpand, onReviewed, onTran
         <div style={{ display: "flex", gap: 10, cursor: "pointer" }} onClick={onOpenDetail}>
           <Avatar photo={person.photo} name={person.name} />
           <div>
-            <div style={styles.cardName}>{person.name}</div>
+            <div style={styles.cardName}>{person.name}{person.secret && <span title="シークレット" style={{ fontSize: 13, marginLeft: 6 }}>🔒</span>}</div>
             <div style={styles.cardMeta}>📍 {person.workplace}{person.role ? `・${person.role}` : ""}</div>
             <div style={styles.cardMeta}>🕒 {person.workplaceStart ? `この職場に ${fmtTenure(person.workplaceStart)}（${person.workplaceStart}〜）` : "この職場にいつからかは不明"}</div>
           </div>
@@ -752,7 +774,7 @@ function DateOrUnknownField({ label, value, onChange }) {
 }
 
 function AddPersonModal({ onClose, onSubmit }) {
-  const [form, setForm] = useState({ name: "", workplace: "", role: "", metDate: todayStr(), workplaceStart: todayStr(), notes: "", photo: null });
+  const [form, setForm] = useState({ name: "", workplace: "", role: "", metDate: todayStr(), workplaceStart: todayStr(), notes: "", photo: null, secret: false });
   const canSubmit = form.name.trim() && form.workplace.trim();
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
@@ -769,6 +791,10 @@ function AddPersonModal({ onClose, onSubmit }) {
           <DateOrUnknownField label="その職場にいつから" value={form.workplaceStart} onChange={(v) => setForm({ ...form, workplaceStart: v })} />
         </div>
         <Field label="会ったときのエピソード"><textarea style={{ ...styles.input, height: 70, resize: "vertical" }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="どこで会ったか、話した内容など" /></Field>
+        <label style={styles.secretCheckboxRow}>
+          <input type="checkbox" checked={form.secret} onChange={(e) => setForm({ ...form, secret: e.target.checked })} />
+          🔒 シークレットにする（特別な操作をしないと一覧に表示されません）
+        </label>
         <button style={{ ...styles.submitButton, ...(canSubmit ? {} : styles.submitButtonDisabled) }} disabled={!canSubmit} onClick={() => onSubmit(form)}>記録する</button>
       </div>
     </div>
@@ -779,7 +805,7 @@ function EditPersonModal({ person, onClose, onSubmit, onDelete }) {
   const [form, setForm] = useState({
     name: person.name, workplace: person.workplace, role: person.role || "",
     metDate: person.metDate, workplaceStart: person.workplaceStart,
-    notes: person.notes || "", photo: person.photo || null,
+    notes: person.notes || "", photo: person.photo || null, secret: !!person.secret,
   });
   const canSubmit = form.name.trim() && form.workplace.trim();
 
@@ -799,6 +825,10 @@ function EditPersonModal({ person, onClose, onSubmit, onDelete }) {
           <DateOrUnknownField label="その職場にいつから" value={form.workplaceStart} onChange={(v) => setForm({ ...form, workplaceStart: v })} />
         </div>
         <Field label="メモ（最新のエピソード表示）"><textarea style={{ ...styles.input, height: 70, resize: "vertical" }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+        <label style={styles.secretCheckboxRow}>
+          <input type="checkbox" checked={form.secret} onChange={(e) => setForm({ ...form, secret: e.target.checked })} />
+          🔒 シークレットにする（特別な操作をしないと一覧に表示されません）
+        </label>
 
         <p style={{ fontSize: 11.5, color: "#8a8477", marginTop: -4, marginBottom: 12 }}>
           ※ 異動履歴・会った記録の一覧はここでは編集できません。新しい異動や再会は「異動を記録」「再会を記録」から追加してください。
@@ -877,6 +907,12 @@ function SettingsPanel({ settings, setSettings }) {
       </Field>
       <p style={styles.settingsNote}>現在の設定: {intervalLabel(settings.intervalDays)}ごとに復習</p>
       <p style={styles.settingsNote}>データはFirebaseに保存されるため、同じアカウントでログインすればどの端末からも同じ記録が見られます。</p>
+
+      <h2 style={{ ...styles.settingsTitle, marginTop: 24 }}>シークレットモード</h2>
+      <p style={styles.settingsDesc}>
+        登録時に「シークレットにする」をチェックした人は、一覧・復習画面に表示されなくなります。
+        ヘッダーの「印」のマークを<strong>5回連続でタップ</strong>すると表示/非表示が切り替わります。
+      </p>
     </div>
   );
 }
@@ -893,6 +929,19 @@ const styles = {
   tabButton: { display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", fontSize: 13, fontFamily: "'Zen Kaku Gothic New', sans-serif", background: "transparent", border: "none", borderBottom: "2px solid transparent", color: "#6B6558", cursor: "pointer" },
   tabButtonActive: { color: "#22262B", borderBottom: "2px solid #B23A2E", fontWeight: 700 },
   main: { padding: "18px 16px", maxWidth: 640, margin: "0 auto" },
+  secretCheckboxRow: {
+    display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#6B6558",
+    marginBottom: 14, marginTop: -2,
+  },
+  secretBanner: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    background: "#22262B", color: "#EFEDE4", borderRadius: 4, padding: "8px 12px",
+    fontSize: 12.5, marginBottom: 12,
+  },
+  secretHideButton: {
+    background: "none", border: "1px solid #6B6558", color: "#EFEDE4", borderRadius: 3,
+    padding: "3px 10px", fontSize: 11.5, cursor: "pointer", fontFamily: "'Zen Kaku Gothic New', sans-serif",
+  },
   addButton: { display: "flex", alignItems: "center", gap: 6, justifyContent: "center", width: "100%", padding: "12px", marginBottom: 16, background: "#22262B", color: "#EFEDE4", border: "none", borderRadius: 3, fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: 14, fontWeight: 500, cursor: "pointer" },
   cardList: { display: "flex", flexDirection: "column", gap: 12 },
   card: { position: "relative", background: "#FAF8F2", border: "1px solid #C9C3B5", borderRadius: 2, padding: "16px 16px 12px", boxShadow: "2px 2px 0 rgba(34,38,43,0.06)", transition: "opacity 0.4s ease, filter 0.4s ease" },
