@@ -211,6 +211,7 @@ function PersonMemoryBook({ fb, user }) {
   const [saveError, setSaveError] = useState(false);
   const [secretUnlocked, setSecretUnlocked] = useState(false);
   const [isPressingStamp, setIsPressingStamp] = useState(false);
+  const [pageFlash, setPageFlash] = useState(false);
   const pressTimerRef = useRef(null);
   const userDocRef = fb.doc(fb.db, "users", user.uid);
   const skipNextWrite = useRef(false);
@@ -312,6 +313,8 @@ function PersonMemoryBook({ fb, user }) {
     if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
     pressTimerRef.current = setTimeout(() => {
       setSecretUnlocked((v) => !v);
+      setPageFlash(true);
+      setTimeout(() => setPageFlash(false), 220);
       pressTimerRef.current = null;
     }, 3000);
   };
@@ -333,7 +336,13 @@ function PersonMemoryBook({ fb, user }) {
   }
 
   return (
-    <div style={styles.page}>
+    <div
+      style={{
+        ...styles.page,
+        backgroundColor: pageFlash ? "#E3B7AC" : isPressingStamp ? "#E2DCCC" : "#EFEDE4",
+        transition: "background-color 0.2s ease",
+      }}
+    >
       <header style={styles.header}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
