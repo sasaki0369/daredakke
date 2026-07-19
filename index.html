@@ -210,8 +210,7 @@ function PersonMemoryBook({ fb, user }) {
   const [detailFor, setDetailFor] = useState(null);
   const [saveError, setSaveError] = useState(false);
   const [secretUnlocked, setSecretUnlocked] = useState(false);
-  const tapCountRef = useRef(0);
-  const tapTimerRef = useRef(null);
+  const pressTimerRef = useRef(null);
   const userDocRef = fb.doc(fb.db, "users", user.uid);
   const skipNextWrite = useRef(false);
 
@@ -307,13 +306,18 @@ function PersonMemoryBook({ fb, user }) {
   const visiblePeople = people.filter((p) => !p.secret || secretUnlocked);
   const dueList = [...visiblePeople].filter(isDue).sort((a, b) => daysBetween(b.lastReviewed, todayStr()) - daysBetween(a.lastReviewed, todayStr()));
 
-  const handleStampTap = () => {
-    tapCountRef.current += 1;
-    clearTimeout(tapTimerRef.current);
-    tapTimerRef.current = setTimeout(() => { tapCountRef.current = 0; }, 1500);
-    if (tapCountRef.current >= 5) {
-      tapCountRef.current = 0;
+  const handleStampPressStart = () => {
+    if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
+    pressTimerRef.current = setTimeout(() => {
       setSecretUnlocked((v) => !v);
+      pressTimerRef.current = null;
+    }, 3000);
+  };
+
+  const handleStampPressEnd = () => {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
     }
   };
 
@@ -331,7 +335,14 @@ function PersonMemoryBook({ fb, user }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={styles.headerTitleRow}>
-              <span style={styles.stampMark} onClick={handleStampTap}>印</span>
+              <span
+                style={{ ...styles.stampMark, userSelect: "none", WebkitTouchCallout: "none" }}
+                onPointerDown={handleStampPressStart}
+                onPointerUp={handleStampPressEnd}
+                onPointerLeave={handleStampPressEnd}
+                onPointerCancel={handleStampPressEnd}
+                onContextMenu={(e) => e.preventDefault()}
+              >印</span>
               <h1 style={styles.title}>名刺帳</h1>
             </div>
             <p style={styles.subtitle}>久しぶりに会った人を、忘れる前に。</p>
@@ -911,7 +922,7 @@ function SettingsPanel({ settings, setSettings }) {
       <h2 style={{ ...styles.settingsTitle, marginTop: 24 }}>シークレットモード</h2>
       <p style={styles.settingsDesc}>
         登録時に「シークレットにする」をチェックした人は、一覧・復習画面に表示されなくなります。
-        ヘッダーの「印」のマークを<strong>5回連続でタップ</strong>すると表示/非表示が切り替わります。
+        ヘッダーの「印」のマークを<strong>3秒間長押し</strong>すると表示/非表示が切り替わります。
       </p>
     </div>
   );
